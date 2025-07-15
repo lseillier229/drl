@@ -17,7 +17,7 @@ class LineWorld(EnvStruct):
   def step(self, a: int):
     assert(a == 1 or a == 0)
     if self.is_game_over():
-      raise Exception("Youpi")
+      return
 
     if a == 0:
       self.s -= 1
