@@ -42,15 +42,14 @@ class RPS(EnvStruct):
     # Interface EnvStruct
     # ------------------------------------------------------------------ #
     def num_states(self) -> int:
-        return 32                    # 2 × 4 × 4
+        return 48             # 2 × 4 × 4
 
     def num_actions(self) -> int:
         return 3                     # ROCK, PAPER, SCISSORS
 
     # (méthode facultative mais pratique pour tes algos)
     def state(self) -> int:
-        """Encode (stage, my_prev, adv_prev) en entier 0‥31."""
-        return self.stage * 16 + (self.my_prev + 1) * 4 + (self.adv_prev + 1)
+        return (self.stage * 16) + ((self.my_prev + 1) * 4) + (self.adv_prev + 1)
 
     def step(self, action: int):
         if self.is_game_over():
