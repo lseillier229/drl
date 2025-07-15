@@ -1,31 +1,5 @@
 # monte_carlo.py
-"""Tabular Monte-Carlo algorithms for small deterministic EnvStruct environments.
-
-Toutes les fonctions nécessitent un environnement *env* conforme à l’interface
-`EnvStruct` (reset, step, score, state, etc.) introduite dans ta librairie.
-
-Fonctions fournies
-------------------
-* **mc_prediction_first_visit**        – estimation V^π par premières visites.
-* **mc_control_es**                    – Monte-Carlo Exploring Starts (ES).
-* **on_policy_first_visit_mc_control** – contrôle on-policy ε-greedy.
-* **off_policy_mc_control**            – contrôle off-policy par IS pondérée.
-
-Représentation
---------------
-Les politiques π sont des tableaux NumPy shape (S, A) formant des lois de
-probabilité (ligne = état).  Pour retourner une politique *déterministe*,
-on place 1.0 sur l’action choisie.
-
-Exemple
--------
-```python
-from envs.gridworld import GridWorld
-from algo.monte_carlo import mc_control_es
-
-pi_opt, Q = mc_control_es(GridWorld(), num_episodes=20000)
-```
-"""
+"""Tabular Monte-Carlo algorithms for small deterministic EnvStruct environments."""
 from __future__ import annotations
 import numpy as np
 from collections import defaultdict
@@ -37,6 +11,7 @@ __all__ = [
     "on_policy_first_visit_mc_control",
     "off_policy_mc_control",
 ]
+
 
 # ---------------------------------------------------------------------------
 #  Utils
@@ -66,39 +41,45 @@ def _epsilon_greedy_policy(Q: np.ndarray, epsilon: float) -> np.ndarray:
 
 
 def _generate_episode(env, policy: np.ndarray):
-    """Yield list of (state, action, reward) until termination."""
+    """Generate episode following policy."""
     episode = []
     env.reset()
-    prev_score = env.score()
+
     while not env.is_game_over():
         s = env.state()
         a = np.random.choice(env.num_actions(), p=policy[s])
+
+        # Enregistrer l'état et l'action AVANT le step
+        prev_score = env.score()
         env.step(a)
         r = env.score() - prev_score
-        prev_score = env.score()
+
         episode.append((s, a, r))
+
     return episode
+
 
 # ---------------------------------------------------------------------------
 #  1)  First-visit Monte-Carlo Prediction
 # ---------------------------------------------------------------------------
 
 def mc_prediction_first_visit(
-    env: "EnvStruct",
-    policy: np.ndarray,
-    num_episodes: int,
-    gamma: float = 1.0,
+        env: "EnvStruct",
+        policy: np.ndarray,
+        num_episodes: int,
+        gamma: float = 1.0,
 ) -> np.ndarray:
     """Estime V^π via premières visites."""
     S = env.num_states()
     V = np.zeros(S)
-    returns: list[list[float]] = [list() for _ in range(S)]  # stockage R
+    returns: list[list[float]] = [list() for _ in range(S)]
 
     for _ in range(num_episodes):
         episode = _generate_episode(env, policy)
         G = 0.0
         visited = set()
-        # parcours inverse pour calculer G_t
+
+        # Parcours inverse pour calculer les retours
         for t in reversed(range(len(episode))):
             s, _, r = episode[t]
             G = gamma * G + r
@@ -106,69 +87,107 @@ def mc_prediction_first_visit(
                 returns[s].append(G)
                 V[s] = np.mean(returns[s])
                 visited.add(s)
+
     return V
+
 
 # ---------------------------------------------------------------------------
 # 2) Monte-Carlo Exploring-Starts Control (ES)
 # ---------------------------------------------------------------------------
 
 def mc_control_es(
-    env: "EnvStruct",
-    num_episodes: int,
-    gamma: float = 1.0,
+        env: "EnvStruct",
+        num_episodes: int,
+        gamma: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Monte Carlo *Exploring Starts* (Algorithme 5.3 du SB).
-
-    Hypothèse : chaque (état, action) peut être choisi comme départ.
-    """
+    """Monte Carlo Exploring Starts."""
     S, A = env.num_states(), env.num_actions()
     Q = np.zeros((S, A))
-    N = np.zeros((S, A))  # compteurs pour la moyenne
+    N = np.zeros((S, A))  # Compteurs de visites
     pi = _random_policy(env)
 
-    for _ in range(num_episodes):
-        # 1) Exploring-start : on force un couple (s0, a0) aléatoire
+    for episode_idx in range(num_episodes):
+        # Exploring start : choisir un état et une action au hasard
         env.reset()
-        # ---- nouvelle ligne : états non terminaux uniquement
-        non_terminals = [s for s in range(S) if not env._is_terminal(s)]  # helper à ajouter si besoin
-        s0 = np.random.choice(non_terminals)
-        if hasattr(env, "s"):
-            env.s = s0
-        elif hasattr(env, "pos"):
-            w = int(np.sqrt(S))
-            env.pos = (s0 // w, s0 % w)
-        a0 = np.random.randint(A)
-        env.step(a0)
-        episode = [(s0, a0, env.score())] + _generate_episode(env, pi)
 
-        # 2) Retour cumulatif G et mise à jour première visite
+        # Obtenir un état de départ valide
+        start_state = np.random.randint(S)
+        start_action = np.random.randint(A)
+
+        # Pour certains environnements, on doit vérifier que l'état n'est pas terminal
+        # On peut faire plusieurs tentatives
+        max_attempts = 100
+        for _ in range(max_attempts):
+            env.reset()
+
+            # Essayer de mettre l'environnement dans l'état start_state
+            if hasattr(env, 's'):  # LineWorld
+                env.s = start_state
+            elif hasattr(env, 'agent_pos'):  # GridWorld
+                w = int(np.sqrt(S))
+                env.agent_pos = (start_state // w, start_state % w)
+            elif hasattr(env, 'state') and hasattr(env, 'stage'):  # RPS, MontyHall
+                # Pour ces environnements, on ne peut pas définir arbitrairement l'état
+                # On génère un épisode normal
+                episode = []
+                prev_score = env.score()
+                env.step(start_action)
+                r = env.score() - prev_score
+                episode.append((env.state(), start_action, r))
+                episode.extend(_generate_episode(env, pi))
+                break
+            else:
+                # Environnement non supporté pour ES, on fait un épisode normal
+                episode = _generate_episode(env, pi)
+                break
+
+            # Vérifier si l'état est terminal
+            if not env.is_game_over():
+                # C'est bon, on peut commencer l'épisode
+                prev_score = env.score()
+                env.step(start_action)
+                r = env.score() - prev_score
+                episode = [(start_state, start_action, r)]
+                episode.extend(_generate_episode(env, pi))
+                break
+            else:
+                # État terminal, on réessaie avec un autre état
+                start_state = np.random.randint(S)
+        else:
+            # Si on n'a pas réussi, on fait un épisode normal
+            episode = _generate_episode(env, pi)
+
+        # Calcul des retours et mise à jour
         G = 0.0
-        visited = set()
+        visited_sa = set()
+
         for t in reversed(range(len(episode))):
             s, a, r = episode[t]
-            if t == 0:
-                # reward pour le premier pas (déjà inclus dans env.score)
-                r = episode[t + 1][2] - episode[t][2] if len(episode) > 1 else 0.0
             G = gamma * G + r
-            if (s, a) not in visited:
-                visited.add((s, a))
+
+            if (s, a) not in visited_sa:
+                visited_sa.add((s, a))
                 N[s, a] += 1
+                # Mise à jour incrémentale de la moyenne
                 Q[s, a] += (G - Q[s, a]) / N[s, a]
-        # 3) Amélioration greedy
+
+        # Amélioration : politique greedy par rapport à Q
         pi = _greedy_policy(Q)
+
     return pi, Q
+
 
 # ---------------------------------------------------------------------------
 # 3) On-policy First-Visit MC Control (ε-greedy)
 # ---------------------------------------------------------------------------
 
 def on_policy_first_visit_mc_control(
-    env: "EnvStruct",
-    num_episodes: int,
-    gamma: float = 1.0,
-    epsilon_start: float = 1.0,
-    epsilon_min: float = 0.05,
-    epsilon_decay: float = 0.999,
+        env: "EnvStruct",
+        num_episodes: int,
+        gamma: float = 1.0,
+        epsilon_start: float = 1.0,
+        epsilon_min: float = 0.05,
+        epsilon_decay: float = 0.999,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """On-policy MC control avec ε-greedy décroissant."""
     S, A = env.num_states(), env.num_actions()
@@ -176,54 +195,78 @@ def on_policy_first_visit_mc_control(
     N = np.zeros((S, A))
     epsilon = epsilon_start
 
-    for _ in range(num_episodes):
+    for episode_idx in range(num_episodes):
+        # Politique ε-greedy courante
         pi = _epsilon_greedy_policy(Q, epsilon)
+
+        # Générer un épisode
         episode = _generate_episode(env, pi)
 
+        # Calcul des retours
         G = 0.0
         visited_sa = set()
+
         for t in reversed(range(len(episode))):
             s, a, r = episode[t]
             G = gamma * G + r
+
             if (s, a) not in visited_sa:
                 visited_sa.add((s, a))
                 N[s, a] += 1
                 Q[s, a] += (G - Q[s, a]) / N[s, a]
+
+        # Décroissance d'epsilon
         epsilon = max(epsilon_min, epsilon * epsilon_decay)
+
+    # Retourner la politique greedy finale
     final_pi = _greedy_policy(Q)
     return final_pi, Q
+
 
 # ---------------------------------------------------------------------------
 # 4) Off-policy MC Control (Importance Sampling pondérée)
 # ---------------------------------------------------------------------------
 
 def off_policy_mc_control(
-    env: "EnvStruct",
-    num_episodes: int,
-    gamma: float = 1.0,
+        env: "EnvStruct",
+        num_episodes: int,
+        gamma: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Off-policy MC control (Weighted IS)
-    *Target* policy est appris (greedy), *behavior* est uniforme.
-    """
+    """Off-policy MC control avec Importance Sampling pondérée."""
     S, A = env.num_states(), env.num_actions()
     Q = np.zeros((S, A))
-    C = np.zeros((S, A))  # accumulateur IS
-    target_pi = _greedy_policy(Q)     # initialement arbitraire (tout 1ère action)
+    C = np.zeros((S, A))  # Somme cumulée des poids d'importance
 
+    # Politique cible (target) : initialement aléatoire, deviendra greedy
+    target_pi = _random_policy(env)
+
+    # Politique de comportement (behavior) : toujours aléatoire uniforme
     behavior_pi = _random_policy(env)
 
-    for _ in range(num_episodes):
+    for episode_idx in range(num_episodes):
+        # Générer un épisode avec la politique de comportement
         episode = _generate_episode(env, behavior_pi)
+
         G = 0.0
-        W = 1.0  # produit des ratios
+        W = 1.0  # Poids d'importance
+
+        # Parcours inverse de l'épisode
         for t in reversed(range(len(episode))):
             s, a, r = episode[t]
             G = gamma * G + r
+
+            # Mise à jour avec importance sampling
             C[s, a] += W
             Q[s, a] += (W / C[s, a]) * (G - Q[s, a])
-            # mettre à jour la politique cible au fur et à mesure
+
+            # Mise à jour de la politique cible pour être greedy
             target_pi = _greedy_policy(Q)
+
+            # Si la politique cible ne choisirait pas cette action, on arrête
             if target_pi[s, a] == 0:
-                break  # probabilité 0 → on peut sortir plus tôt
-            W /= behavior_pi[s, a]
+                break
+
+            # Mise à jour du poids d'importance
+            W = W * (target_pi[s, a] / behavior_pi[s, a])
+
     return target_pi, Q

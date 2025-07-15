@@ -1,34 +1,9 @@
 # dynamic_programming.py
-"""Dynamic‑Programming algorithms (tabular) for small MDPs.
-
-The functions assume you already have a *model* of the environment,
-expressed as two NumPy arrays:
-
-    P  shape (S, A, S)   — transition probabilities P[s, a, s′]
-    R  shape (S, A, S)   — expected immediate reward when moving s→s′ via a
-
-…plus a discount factor γ.
-
-This mirrors the matrices you ascribes in the notebook (``p`` / ``R``) and
-plays nicely with your deterministic ``EnvStruct`` environments once you have
-extracted such a model.  A minimal helper (`build_model_from_env`) is provided
-for *deterministic* EnvStruct‑style envs.
-
-Typical workflow
-----------------
-```
-from envs.gridworld import GridWorld            # ← ton env maison
-from algo.dynamic_programming import policy_iteration
-
-P, R = build_model_from_env(GridWorld())        # tabular model
-policy, V = policy_iteration(P, R, gamma=1.0)   # optimal π*
-```
-
-If you already know *your* `P`/`R`, just call the algorithms directly.
-"""
+"""Dynamic‑Programming algorithms (tabular) for small MDPs."""
 from __future__ import annotations
 import numpy as np
 from typing import Tuple, List
+import copy
 
 __all__ = [
     "policy_evaluation",
@@ -45,38 +20,27 @@ def policy_evaluation(
         pi: np.ndarray,
         gamma: float = 1.0,
         theta: float = 1e-8) -> np.ndarray:
-    """Iterative Policy Evaluation (IP; Sutton&Barto alg. 4.1).
-
-    Parameters
-    ----------
-    P : (S, A, S) array
-        Transition probabilities.
-    R : (S, A, S) array
-        Rewards associated with transitions.
-    pi : (S, A) array
-        Stochastic policy — each row sums to 1.
-    gamma : float
-        Discount factor.
-    theta : float
-        Convergence threshold.
-
-    Returns
-    -------
-    V : (S,) array of state‑values under *pi*.
-    """
+    """Iterative Policy Evaluation."""
     S, A, _ = P.shape
     V = np.zeros(S)
+
     while True:
         delta = 0.0
         for s in range(S):
             v = V[s]
-            V[s] = sum(
-                pi[s, a] * (P[s, a] @ (R[s, a] + gamma * V))  # dot over s′
-                for a in range(A)
-            )
+            # Nouvelle valeur selon la politique π
+            new_v = 0.0
+            for a in range(A):
+                # Somme sur tous les états suivants possibles
+                for s_next in range(S):
+                    new_v += pi[s, a] * P[s, a, s_next] * (R[s, a, s_next] + gamma * V[s_next])
+
+            V[s] = new_v
             delta = max(delta, abs(v - V[s]))
+
         if delta < theta:
             break
+
     return V
 
 
@@ -84,99 +48,58 @@ def policy_improvement(
         P: np.ndarray,
         R: np.ndarray,
         V: np.ndarray,
-        gamma: float = 1.0,
-) -> Tuple[np.ndarray, bool]:
-    """Greedy policy improvement.
-
-    Returns a *deterministic* improved policy and a boolean flag
-    indicating if it is unchanged (i.e. stable).
-    """
+        gamma: float = 1.0) -> Tuple[np.ndarray, bool]:
+    """Greedy policy improvement."""
     S, A, _ = P.shape
     pi_new = np.zeros((S, A))
     stable = True
 
     for s in range(S):
-        # Calculer Q-values pour cet état
-        q_sa = np.array([P[s, a] @ (R[s, a] + gamma * V) for a in range(A)])
+        # Action actuelle selon l'ancienne politique (pour vérifier la stabilité)
+        old_action = pi_new[s].argmax()
 
-        # Trouver la meilleure action (gestion des ties)
-        max_q = q_sa.max()
-        best_actions = np.where(np.abs(q_sa - max_q) < 1e-10)[0]  # Toutes les actions optimales
+        # Calculer Q(s,a) pour toutes les actions
+        q_values = np.zeros(A)
+        for a in range(A):
+            for s_next in range(S):
+                q_values[a] += P[s, a, s_next] * (R[s, a, s_next] + gamma * V[s_next])
 
-        # Politique déterministique : choisir la première action optimale pour consistance
-        a_best = best_actions[0]
+        # Politique greedy : choisir la meilleure action
+        best_action = np.argmax(q_values)
+        pi_new[s] = np.zeros(A)
+        pi_new[s, best_action] = 1.0
 
-        # Nouvelle politique déterministique
-        pi_best = np.zeros(A)
-        pi_best[a_best] = 1.0
-
-        # Vérifier si la politique a changé (comparaison numérique robuste)
-        if not np.allclose(pi_best, pi_new[s], atol=1e-10):
+        # Vérifier si la politique a changé
+        if best_action != old_action:
             stable = False
-
-        pi_new[s] = pi_best
 
     return pi_new, stable
 
 
 def policy_iteration(
-    S: List[int],
-    A: List[int],
-    R: List[int],
-    T: List[int],
-    p: np.ndarray,
-    theta: float = 0.00001,
-    gamma: float = 0.999999,
-):
-  V = np.random.random((len(S),))
-  V[T] = 0.0
-  pi = np.array([np.random.choice(A) for s in S])
-  pi[T] = 0
+        P: np.ndarray,
+        R: np.ndarray,
+        gamma: float = 1.0,
+        theta: float = 1e-8) -> Tuple[np.ndarray, np.ndarray]:
+    """Policy Iteration algorithm."""
+    S, A, _ = P.shape
 
-  while True:
+    # Initialisation : politique aléatoire uniforme
+    pi = np.ones((S, A)) / A
 
-    # Policy Evaluation
     while True:
-      delta = 0.0
+        # Policy Evaluation
+        V = policy_evaluation(P, R, pi, gamma, theta)
 
-      for s in S:
-        v = V[s]
-        total = 0.0
-        for s_p in S:
-          for r_index in range(len(R)):
-            r = R[r_index]
-            total += p[s, pi[s], s_p, r_index] * (r + gamma * V[s_p])
-        V[s] = total
-        abs_diff = np.abs(v - V[s])
-        delta = np.maximum(delta, abs_diff)
+        # Policy Improvement
+        pi_new, stable = policy_improvement(P, R, V, gamma)
 
-      if delta < theta:
-        break
+        if stable:
+            break
 
-    # Policy Improvement
+        pi = pi_new
 
-    policy_stable = True
-    for s in S:
-      old_action = pi[s]
-      best_a = None
-      best_a_score = -999999999.99999
-      for a in A:
-        score = 0.0
-        for s_p in S:
-          for r_index in range(len(R)):
-            r = R[r_index]
-            score += p[s, a, s_p, r_index] * (r + gamma * V[s_p])
-        if best_a is None or score > best_a_score:
-          best_a = a
-          best_a_score = score
-      if best_a != old_action:
-        policy_stable = False
-      pi[s] = best_a
-
-    if policy_stable:
-      break
-
-  return pi, V
+    return pi, V
 
 
 def value_iteration(
@@ -184,85 +107,159 @@ def value_iteration(
         R: np.ndarray,
         gamma: float = 1.0,
         theta: float = 1e-8,
-        max_iter: int = 1_000,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Value‑Iteration (Bellman optimality)
-
-    Returns (optimal_policy, optimal_value).
-    """
+        max_iter: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
+    """Value Iteration algorithm."""
     S, A, _ = P.shape
     V = np.zeros(S)
-    for _ in range(max_iter):
+
+    for iteration in range(max_iter):
         delta = 0.0
+
         for s in range(S):
             v = V[s]
-            q_sa = np.array([P[s, a] @ (R[s, a] + gamma * V) for a in range(A)])
-            V[s] = q_sa.max()
+
+            # Calculer la valeur maximale sur toutes les actions
+            q_values = np.zeros(A)
+            for a in range(A):
+                for s_next in range(S):
+                    q_values[a] += P[s, a, s_next] * (R[s, a, s_next] + gamma * V[s_next])
+
+            V[s] = np.max(q_values)
             delta = max(delta, abs(v - V[s]))
+
         if delta < theta:
             break
-    # derive greedy policy
+
+    # Extraire la politique optimale
     pi = np.zeros((S, A))
     for s in range(S):
-        q_sa = np.array([P[s, a] @ (R[s, a] + gamma * V) for a in range(A)])
-        pi[s, q_sa.argmax()] = 1.0
+        q_values = np.zeros(A)
+        for a in range(A):
+            for s_next in range(S):
+                q_values[a] += P[s, a, s_next] * (R[s, a, s_next] + gamma * V[s_next])
+
+        best_action = np.argmax(q_values)
+        pi[s, best_action] = 1.0
+
     return pi, V
 
 
-# ---------------------------------------------------------------------------
-# Helper: build model matrices from *deterministic* EnvStruct environments
-# ---------------------------------------------------------------------------
-
 def build_model_from_env(env: "EnvStruct") -> Tuple[np.ndarray, np.ndarray]:
-    """Extract *deterministic* P and R from an EnvStruct env.
-
-    Works iff `env.step(a)` is deterministic and the reward equals the
-    *change* in `score()`.  The environment must expose a public attribute
-    or property `s` (current state id) so it can be reset to arbitrary
-    states.  All your small environments (`LineWorld`, `GridWorld`, etc.)
-    respect this pattern.
-    """
-    import copy
+    """Extract deterministic P and R from an EnvStruct env."""
     S = env.num_states()
     A = env.num_actions()
     P = np.zeros((S, A, S))
     R = np.zeros((S, A, S))
 
-    # brute‑force over every state/action by cloning env
-    for s in range(S):
-        for a in range(A):
-            e = copy.deepcopy(env)
-            # place env in state *s*
-            if hasattr(e, "s"):
-                e.s = s  # LineWorld
-            elif hasattr(e, "pos"):
-                # GridWorld: decode (row, col)
+    # Helper to check if a state is terminal
+    def is_terminal_state(env_copy, state):
+        """Check if a state is terminal by setting the env to that state."""
+        # Save current state
+        original_state = get_state(env_copy)
+
+        # Set to test state
+        set_state(env_copy, state)
+        is_term = env_copy.is_game_over()
+
+        # Restore original state
+        set_state(env_copy, original_state)
+
+        return is_term
+
+    # Helper functions to get/set state
+    def get_state(e):
+        if hasattr(e, 's'):
+            return e.s
+        elif hasattr(e, 'pos'):
+            return e.pos
+        elif hasattr(e, 'agent_pos'):
+            return e.agent_pos
+        elif hasattr(e, 'state'):
+            return e.state()
+        else:
+            return None
+
+    def set_state(e, state):
+        if hasattr(e, 's'):
+            e.s = state
+        elif hasattr(e, 'pos'):
+            if isinstance(state, int):
+                # Convert state index to position for GridWorld
                 w = int(np.sqrt(S))
-                e.pos = (s // w, s % w)
+                e.pos = (state // w, state % w)
             else:
-                # Pour les autres environnements, on ne peut pas créer le modèle
-                # On va juste mettre des valeurs par défaut
-                P[s, a, s] = 1.0  # Self-loop
+                e.pos = state
+        elif hasattr(e, 'agent_pos'):
+            if isinstance(state, int):
+                # Convert state index to position for GridWorld
+                w = int(np.sqrt(S))
+                e.agent_pos = (state // w, state % w)
+            else:
+                e.agent_pos = state
+
+    # Build model for each (state, action) pair
+    for s in range(S):
+        # Check if this state is terminal using a fresh env copy
+        env_test = copy.deepcopy(env)
+        env_test.reset()
+
+        # For grid-based environments
+        if hasattr(env_test, 'agent_pos') or hasattr(env_test, 'pos'):
+            w = int(np.sqrt(S))
+            row, col = s // w, s % w
+            set_state(env_test, (row, col))
+        else:
+            set_state(env_test, s)
+
+        if env_test.is_game_over():
+            # Terminal state: self-loop with 0 reward
+            for a in range(A):
+                P[s, a, s] = 1.0
                 R[s, a, s] = 0.0
-                continue
+            continue
 
-            # Vérifier si l'état est terminal avant de faire step
-            if e.is_game_over():
-                # État terminal : pas de transition possible, reste dans le même état
-                P[s, a, s] = 1.0  # Self-loop
-                R[s, a, s] = 0.0  # Pas de récompense supplémentaire
-                continue
+        # Non-terminal state: try each action
+        for a in range(A):
+            # Create fresh copy for this action
+            e = copy.deepcopy(env)
+            e.reset()
 
-            v_before = e.score()
+            # Set to state s
+            if hasattr(e, 'agent_pos') or hasattr(e, 'pos'):
+                w = int(np.sqrt(S))
+                row, col = s // w, s % w
+                set_state(e, (row, col))
+            else:
+                set_state(e, s)
+
+            # Get score before action
+            score_before = e.score()
+
+            # Execute action
             try:
                 e.step(a)
-                s_next = e.state()
-                r = e.score() - v_before
+
+                # Get next state
+                if hasattr(e, 'state'):
+                    s_next = e.state()
+                elif hasattr(e, 'agent_pos'):
+                    r, c = e.agent_pos
+                    s_next = r * int(np.sqrt(S)) + c
+                elif hasattr(e, 'pos'):
+                    r, c = e.pos
+                    s_next = r * int(np.sqrt(S)) + c
+                else:
+                    s_next = e.s
+
+                # Calculate reward
+                reward = e.score() - score_before
+
+                # Set transition
                 P[s, a, s_next] = 1.0
-                R[s, a, s_next] = r
-            except:
-                # En cas d'erreur (comme l'ancienne exception "Youpi")
-                # considérer que l'action n'a pas d'effet
+                R[s, a, s_next] = reward
+
+            except Exception as e:
+                # If action fails, stay in same state with 0 reward
                 P[s, a, s] = 1.0
                 R[s, a, s] = 0.0
 
