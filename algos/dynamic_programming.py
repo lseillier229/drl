@@ -94,7 +94,7 @@ def policy_iteration(
     elif len(args) >= 5:
         # Format 2 : S, A, R, T, p
         S, A, R, T, p = args[:5]
-        theta = kwargs.get('theta', 0.00001)
+        theta = kwargs.get('theta', 0.001)
         gamma = kwargs.get('gamma', 0.9)
         return _policy_iteration_format2(S, A, R, T, p, theta, gamma)
 

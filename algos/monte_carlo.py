@@ -260,7 +260,7 @@ def off_policy_mc_control(
             Q[s, a] += (W / C[s, a]) * (G - Q[s, a])
 
             # Mise à jour de la politique cible pour être greedy
-            target_pi = _greedy_policy(Q)
+            target_pi = _epsilon_greedy_policy(Q, 0.1)
 
             # Si la politique cible ne choisirait pas cette action, on arrête
             if target_pi[s, a] == 0:

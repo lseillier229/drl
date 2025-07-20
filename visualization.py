@@ -176,8 +176,8 @@ class EnvironmentVisualizer:
             self.ax.text(0.5, 0.5, "Choose: 1=Rock, 2=Paper, 3=Scissors", ha='center', fontsize=16)
         elif stage == 1:
             self.ax.text(0.5, 0.8, "Round 1 Results", ha='center', fontsize=20, weight='bold')
-            self.ax.text(0.3, 0.6, f"You: {symbols[my_prev]}", ha='center', fontsize=30)
-            self.ax.text(0.7, 0.6, f"Opponent: {symbols[adv_prev]}", ha='center', fontsize=30)
+            self.ax.text(0.3, 0.6, f"You: {names[my_prev]}", ha='center', fontsize=30)
+            self.ax.text(0.7, 0.6, f"Opponent: {names[adv_prev]}", ha='center', fontsize=30)
             self.ax.text(0.5, 0.4, "Round 2 - Opponent will copy your Round 1 move!", 
                         ha='center', fontsize=14, color='red')
             self.ax.text(0.5, 0.3, "Choose: 1=Rock, 2=Paper, 3=Scissors", ha='center', fontsize=16)
@@ -214,7 +214,7 @@ class EnvironmentVisualizer:
             is_open = (opened_mask >> i) & 1
             if is_open:
                 color = 'lightgray'
-                self.ax.text(x, 0.5, "❌", ha='center', va='center', fontsize=40)
+                self.ax.text(x, 0.5, "Chevre", ha='center', va='center', fontsize=40)
             elif i == chosen and chosen < n_doors:
                 color = 'yellow'
             else:
@@ -345,7 +345,7 @@ class PolicyManager:
         with open(filepath, 'wb') as f:
             pickle.dump(policy_data, f)
         
-        print(f"✅ Politique sauvegardée : {filepath}")
+        print(f"Politique sauvegardée : {filepath}")
     
     def load_policy(self, filename: str) -> Dict[str, Any]:
         """Charge une politique sauvegardée."""
@@ -357,7 +357,7 @@ class PolicyManager:
         with open(filepath, 'rb') as f:
             policy_data = pickle.load(f)
         
-        print(f"✅ Politique chargée : {filepath}")
+        print(f"Politique chargée : {filepath}")
         print(f"   Algorithme : {policy_data.get('algorithm', 'Unknown')}")
         print(f"   Environnement : {policy_data.get('environment', 'Unknown')}")
         print(f"   Score : {policy_data.get('score', 'N/A')}")
